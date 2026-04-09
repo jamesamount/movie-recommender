@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+models/artifacts/*.joblib
+data/processed/*.csv
+backend/app/__pycache__/
+ml/__pycache__/
+

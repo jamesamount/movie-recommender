@@ -1,0 +1,2 @@
+"""Movie recommendation pipeline package."""
+
