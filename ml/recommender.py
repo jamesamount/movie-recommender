@@ -100,6 +100,27 @@ class MovieRecommenderEngine:
         quality_component = min(max(quality_score / 10, 0.0), 1.0)
         return 0.78 * similarity + 0.22 * quality_component
 
+    @staticmethod
+    def _favorite_signature(favorite_titles: Iterable[str]) -> tuple[str, ...]:
+        return tuple(str(title).strip() for title in favorite_titles if str(title).strip())
+
+    @staticmethod
+    def _rated_signature(rated_movies: Iterable[dict]) -> tuple[tuple[str, int | None, float], ...]:
+        signature: list[tuple[str, int | None, float]] = []
+        for entry in rated_movies:
+            title = str(entry.get("title", "")).strip()
+            if not title:
+                continue
+            year = entry.get("year")
+            signature.append(
+                (
+                    title,
+                    int(year) if year not in (None, "") else None,
+                    round(float(entry.get("rating", 4.0)), 2),
+                )
+            )
+        return tuple(signature)
+
     def get_movie_by_id(self, movie_id: str) -> tuple[int, pd.Series]:
         matches = self.catalog.index[self.catalog["movie_id"].astype(str) == str(movie_id)]
         if matches.empty:
@@ -307,15 +328,45 @@ class MovieRecommenderEngine:
     ) -> dict:
         favorite_titles = list(favorite_titles or [])
         rated_movies = list(rated_movies or [])
+        seed_movies, recommendations, excluded_count = self._personalized_cached(
+            self._favorite_signature(favorite_titles),
+            self._rated_signature(rated_movies),
+            top_n,
+            genre,
+            decade,
+            min_rating,
+            runtime_max,
+        )
+        return {
+            "seed_movies": list(seed_movies),
+            "recommendations": list(recommendations),
+            "excluded_count": excluded_count,
+        }
 
-        rated_titles = [entry["title"] for entry in rated_movies if entry.get("title")]
-        seed_indices = resolve_title_matches(self.catalog, favorite_titles + rated_titles)
+    @lru_cache(maxsize=256)
+    def _personalized_cached(
+        self,
+        favorite_titles: tuple[str, ...],
+        rated_movies: tuple[tuple[str, int | None, float], ...],
+        top_n: int,
+        genre: str | None,
+        decade: int | None,
+        min_rating: float | None,
+        runtime_max: int | None,
+    ) -> tuple[tuple[dict, ...], tuple[dict, ...], int]:
+        rated_movie_payload = [
+            {"title": title, "year": year, "rating": rating}
+            for title, year, rating in rated_movies
+        ]
+
+        rated_titles = [entry["title"] for entry in rated_movie_payload if entry.get("title")]
+        seed_indices = resolve_title_matches(self.catalog, list(favorite_titles) + rated_titles)
         if not seed_indices:
             raise RecommendationError("No favorite or rated movies matched the catalog.")
 
         watched_indices = set(seed_indices)
         weighted_rows = []
-        for entry in rated_movies:
+        for entry in rated_movie_payload:
             matches = resolve_title_matches(self.catalog, [entry.get("title", "")])
             if not matches:
                 continue
@@ -356,11 +407,7 @@ class MovieRecommenderEngine:
                 break
 
         seed_movies = [self._base_record(self.catalog.iloc[index]) for index in seed_indices[:8]]
-        return {
-            "seed_movies": seed_movies,
-            "recommendations": recommendations,
-            "excluded_count": len(watched_indices),
-        }
+        return tuple(seed_movies), tuple(recommendations), len(watched_indices)
 
     def list_filters(self) -> dict:
         genre_values = sorted({genre for genres in self.catalog["genres"] for genre in genres})

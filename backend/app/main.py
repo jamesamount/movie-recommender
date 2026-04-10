@@ -45,12 +45,17 @@ def _apply_streaming_filter(
     *,
     selected_services: list[str],
     expand_pool_message: str | None = None,
+    max_matches: int | None = None,
 ) -> list[dict]:
     streaming_service = get_streaming_provider_service()
     if not selected_services:
         return movies
     try:
-        filtered = streaming_service.filter_movies(movies, selected_services)
+        filtered = streaming_service.filter_movies(
+            movies,
+            selected_services,
+            max_matches=max_matches,
+        )
     except StreamingProviderError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not filtered and expand_pool_message:
@@ -58,11 +63,14 @@ def _apply_streaming_filter(
     return filtered
 
 
-def _enrich_media(movies: list[dict]) -> list[dict]:
+def _enrich_media(movies: list[dict], *, limit: int | None = None) -> list[dict]:
     streaming_service = get_streaming_provider_service()
     if not streaming_service.enabled:
         return movies
-    return streaming_service.enrich_movies_media(movies)
+    if limit is None or limit >= len(movies):
+        return streaming_service.enrich_movies_media(movies)
+    leading = streaming_service.enrich_movies_media(movies[:limit])
+    return leading + movies[limit:]
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,8 +146,8 @@ def search_movies(
         results,
         selected_services=requested_services,
         expand_pool_message="No search results matched the selected streaming services.",
+        max_matches=limit,
     )[:limit]
-    results = _enrich_media(results)
     return SearchResponse(query=q, results=results)
 
 
@@ -174,9 +182,10 @@ def recommend_similar(
         payload["recommendations"],
         selected_services=requested_services,
         expand_pool_message="No similar movies matched the selected streaming services.",
+        max_matches=top_n,
     )[:top_n]
     payload["seed_movie"] = _enrich_media([payload["seed_movie"]])[0]
-    payload["recommendations"] = _enrich_media(payload["recommendations"])
+    payload["recommendations"] = _enrich_media(payload["recommendations"], limit=4)
     return SimilarResponse(method=method, **payload)
 
 
@@ -192,18 +201,22 @@ def recommend_random(
     requested_services = _parse_streaming_services(streaming_services)
     try:
         if requested_services:
-            candidate_titles = engine.catalog_candidates(
-                genre=genre,
-                decade=decade,
-                min_rating=min_rating,
-                runtime_max=runtime_max,
-                limit=max(len(engine.catalog), 250),
-            )
-            filtered = _apply_streaming_filter(
-                candidate_titles,
-                selected_services=requested_services,
-                expand_pool_message="No random candidates matched the selected streaming services.",
-            )
+            filtered: list[dict] = []
+            for candidate_limit in (40, 100, 180):
+                candidate_titles = engine.catalog_candidates(
+                    genre=genre,
+                    decade=decade,
+                    min_rating=min_rating,
+                    runtime_max=runtime_max,
+                    limit=candidate_limit,
+                )
+                filtered = _apply_streaming_filter(
+                    candidate_titles,
+                    selected_services=requested_services,
+                    max_matches=24,
+                )
+                if filtered:
+                    break
             if not filtered:
                 raise RecommendationError("No random candidates matched the selected streaming services.")
             movie = random.choice(filtered)
@@ -240,9 +253,9 @@ def recommend_personalized(payload: PersonalizedRequest) -> PersonalizedResponse
         result["recommendations"],
         selected_services=selected_services,
         expand_pool_message="No personalized recommendations matched the selected streaming services.",
+        max_matches=payload.top_n,
     )[: payload.top_n]
-    result["seed_movies"] = _enrich_media(result["seed_movies"])
-    result["recommendations"] = _enrich_media(result["recommendations"])
+    result["recommendations"] = _enrich_media(result["recommendations"], limit=2)
     return PersonalizedResponse(**result)
 
 
@@ -296,9 +309,9 @@ async def import_letterboxd(
         result["recommendations"],
         selected_services=selected_services,
         expand_pool_message="No Letterboxd recommendations matched the selected streaming services.",
+        max_matches=top_n,
     )[:top_n]
-    result["seed_movies"] = _enrich_media(result["seed_movies"])
-    result["recommendations"] = _enrich_media(result["recommendations"])
+    result["recommendations"] = _enrich_media(result["recommendations"], limit=2)
 
     return LetterboxdImportResponse(
         imported_count=len(frame),

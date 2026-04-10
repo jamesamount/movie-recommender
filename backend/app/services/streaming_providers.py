@@ -9,6 +9,7 @@ from backend.app.config import (
     TMDB_API_BASE_URL,
     TMDB_API_KEY,
     TMDB_API_READ_ACCESS_TOKEN,
+    TMDB_REQUEST_TIMEOUT_SECONDS,
     TMDB_WATCH_REGION,
 )
 
@@ -28,6 +29,16 @@ COMMON_PROVIDER_HINTS = [
     "Paramount Plus",
 ]
 
+PROVIDER_ALIASES = {
+    "max": "hbo max",
+    "prime video": "amazon prime video",
+    "amazon prime": "amazon prime video",
+    "apple tv plus": "apple tv",
+    "apple tv+": "apple tv",
+    "disney+": "disney plus",
+    "paramount+": "paramount plus",
+}
+
 
 class TMDbStreamingProviderService:
     def __init__(self) -> None:
@@ -43,6 +54,32 @@ class TMDbStreamingProviderService:
                     "Accept": "application/json",
                 }
             )
+
+    @staticmethod
+    def _normalize_provider_name(name: str) -> str:
+        normalized = str(name or "").strip().casefold()
+        normalized = normalized.replace("&", " and ")
+        normalized = normalized.replace("+", " plus ")
+        normalized = " ".join(normalized.split())
+        return PROVIDER_ALIASES.get(normalized, normalized)
+
+    def _provider_matches(self, selected_services: set[str], available_services: Iterable[str]) -> bool:
+        available_normalized = {
+            self._normalize_provider_name(service)
+            for service in available_services
+            if str(service).strip()
+        }
+        if not available_normalized:
+            return False
+        for selected in selected_services:
+            if selected in available_normalized:
+                return True
+            if any(
+                available.startswith(selected) or selected.startswith(available)
+                for available in available_normalized
+            ):
+                return True
+        return False
 
     @property
     def enabled(self) -> bool:
@@ -64,11 +101,16 @@ class TMDbStreamingProviderService:
         if self.api_key and not self.read_access_token:
             request_params["api_key"] = self.api_key
 
-        response = self.session.get(
-            f"{self.api_base_url}{path}",
-            params=request_params,
-            timeout=12,
-        )
+        try:
+            response = self.session.get(
+                f"{self.api_base_url}{path}",
+                params=request_params,
+                timeout=TMDB_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise StreamingProviderError(
+                "Streaming availability data is temporarily unavailable from TMDb. Please try again."
+            ) from exc
 
         if response.status_code == 404:
             return {}
@@ -107,7 +149,6 @@ class TMDbStreamingProviderService:
     def movie_availability(self, tmdb_movie_id: str) -> dict:
         if not self.enabled:
             return {"streaming_services": [], "watch_link": ""}
-
         payload = self._request(f"/movie/{tmdb_movie_id}/watch/providers")
         region_data = payload.get("results", {}).get(self.watch_region, {})
 
@@ -133,8 +174,10 @@ class TMDbStreamingProviderService:
     def movie_visuals(self, tmdb_movie_id: str) -> dict:
         if not self.enabled:
             return {"poster_url": "", "backdrop_url": ""}
-
-        payload = self._request(f"/movie/{tmdb_movie_id}")
+        try:
+            payload = self._request(f"/movie/{tmdb_movie_id}")
+        except StreamingProviderError:
+            return {"poster_url": "", "backdrop_url": ""}
         poster_path = str(payload.get("poster_path", "") or "").strip()
         backdrop_path = str(payload.get("backdrop_path", "") or "").strip()
         return {
@@ -165,9 +208,15 @@ class TMDbStreamingProviderService:
             return list(movies)
         return [self.enrich_movie_media(movie) for movie in movies]
 
-    def filter_movies(self, movies: Iterable[dict], selected_services: Iterable[str]) -> list[dict]:
+    def filter_movies(
+        self,
+        movies: Iterable[dict],
+        selected_services: Iterable[str],
+        *,
+        max_matches: int | None = None,
+    ) -> list[dict]:
         selected = {
-            service.strip().casefold()
+            self._normalize_provider_name(service)
             for service in selected_services
             if str(service).strip()
         }
@@ -179,7 +228,8 @@ class TMDbStreamingProviderService:
         filtered = []
         for movie in movies:
             enriched = self.annotate_movie(movie)
-            available = {service.casefold() for service in enriched["streaming_services"]}
-            if selected & available:
+            if self._provider_matches(selected, enriched["streaming_services"]):
                 filtered.append(enriched)
+                if max_matches is not None and len(filtered) >= max_matches:
+                    break
         return filtered
