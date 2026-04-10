@@ -26,6 +26,23 @@ NUMERIC_COLUMNS = [
 TEXT_FEATURE_WEIGHT = 1.0
 NUMERIC_FEATURE_WEIGHT = 0.18
 
+ARTIFACT_CATALOG_COLUMNS = [
+    "movie_id",
+    "title",
+    "year",
+    "genres",
+    "director",
+    "vote_average",
+    "vote_count",
+    "popularity",
+    "runtime",
+    "avg_user_rating",
+    "user_rating_count",
+    "overview",
+    "poster_url",
+    "source",
+    "quality_score",
+]
 
 @dataclass(slots=True)
 class ArtifactBuildResult:
@@ -101,11 +118,12 @@ def build_artifact(catalog: pd.DataFrame, dataset_source: str) -> ArtifactBuildR
     nn_model = NearestNeighbors(metric="cosine", algorithm="brute", n_neighbors=min(50, len(working)))
     nn_model.fit(feature_matrix)
 
+    available_columns = [col for col in ARTIFACT_CATALOG_COLUMNS if col in working.columns]
+    runtime_catalog = working[available_columns].copy()
+        
     artifact = {
-        "catalog": working,
+        "catalog": runtime_catalog,
         "feature_matrix": feature_matrix,
-        "vectorizer": vectorizer,
-        "numeric_scaler": scaler,
         "nn_model": nn_model,
         "dataset_source": dataset_source,
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -135,5 +153,5 @@ def build_artifact(catalog: pd.DataFrame, dataset_source: str) -> ArtifactBuildR
 def save_artifact(result: ArtifactBuildResult) -> None:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(result.artifact, ARTIFACT_PATH)
+    joblib.dump(result.artifact, ARTIFACT_PATH, compress=3)
     result.catalog_preview.to_csv(PROCESSED_CATALOG_PATH, index=False)

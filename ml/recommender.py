@@ -60,7 +60,7 @@ class MovieRecommenderEngine:
             "popularity": round(float(row["popularity"]), 2),
             "runtime": int(row["runtime"]) if row["runtime"] else None,
             "overview": row["overview"],
-            "poster_url": self.fix_poster_url(row.get("poster_path")),
+            "poster_url": self.fix_poster_url(row.get("poster_url")),
             "source": row["source"],
             "quality_score": round(float(row["quality_score"]), 4),
         }
