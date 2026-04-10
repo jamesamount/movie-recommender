@@ -212,6 +212,23 @@ label span {
   gap: 1rem;
 }
 
+.filter-bar__title {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.active-filter-badge {
+  padding: 0.55rem 0.85rem;
+  border: 1px solid rgba(255, 93, 104, 0.32);
+  border-radius: 999px;
+  color: #ffd7da;
+  background: rgba(229, 9, 20, 0.14);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .filter-bar h2,
 .panel h2 {
   font-size: clamp(1.9rem, 4vw, 3rem);
@@ -652,7 +669,8 @@ textarea {
 .loading-block,
 .inline-error,
 .personalized-meta,
-.letterboxd-summary {
+.letterboxd-summary,
+.letterboxd-note {
   padding: 1rem;
   border-radius: 18px;
 }
@@ -675,6 +693,28 @@ textarea {
   margin: 1rem 0;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--line);
+}
+
+.letterboxd-note {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+}
+
+.letterboxd-note span {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.letterboxd-note p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .movie-grid {

@@ -62,6 +62,17 @@ function toApiFilters(filters) {
   };
 }
 
+function hasActiveFilters(filters) {
+  return Object.values(filters).some((value) => String(value || "").trim() !== "");
+}
+
+function formatImportedTitles(titles = [], limit = 10) {
+  if (!titles.length) return "";
+  const visible = titles.slice(0, limit).join(", ");
+  const remaining = titles.length - limit;
+  return remaining > 0 ? `${visible}, and ${remaining} more` : visible;
+}
+
 function LoadingBlock({ label = "Loading..." }) {
   return html`<div className="loading-block">${label}</div>`;
 }
@@ -242,7 +253,7 @@ function MovieCard({ movie, badge, onSelect, actionLabel = "Find similar" }) {
         </div>
         <div className="movie-card__stats">
           <span>TMDb ${movie.rating?.toFixed?.(1) || movie.rating}</span>
-          <span>User ${movie.user_rating?.toFixed?.(1) || movie.user_rating}</span>
+          ${movie.user_rating > 0 ? html`<span>User ${movie.user_rating?.toFixed?.(1) || movie.user_rating}</span>` : null}
           ${movie.similarity ? html`<span>Match ${(movie.similarity * 100).toFixed(0)}%</span>` : null}
         </div>
         ${movie.streaming_services?.length
@@ -298,11 +309,15 @@ function toggleProvider(filters, onChange, providerName) {
 
 function FilterBar({ health, filters, onChange, onReset, streamingProviders }) {
   const selectedProviders = new Set(parseStreamingServices(filters.streamingServices));
+  const filtersActive = hasActiveFilters(filters);
   return html`
     <section className="filter-bar">
       <div className="filter-bar__heading">
-        <p className="section-kicker">Tuning</p>
-        <h2>Shape discovery with practical filters</h2>
+        <div className="filter-bar__title">
+          <p className="section-kicker">Tuning</p>
+          <h2>Shape discovery with practical filters</h2>
+        </div>
+        ${filtersActive ? html`<span className="active-filter-badge">Filters active</span>` : null}
       </div>
       <div className="filter-grid">
         <label>
@@ -404,10 +419,11 @@ function SearchSection({
   similarMethod,
   setSimilarMethod,
   similarLoading,
+  similarError,
 }) {
   const visibleResults = results.slice(0, 6);
   const featuredRecommendation = similarResults?.[0] || null;
-  const quickPicks = (similarResults || []).slice(1, 5);
+  const quickPicks = (similarResults || []).slice(1, 6);
 
   return html`
     <section className="panel panel--search">
@@ -478,6 +494,7 @@ function SearchSection({
               </div>
             `}
           />
+          <${InlineError} message=${similarError} />
           ${similarLoading
             ? html`<${LoadingBlock} label="Ranking neighbors..." />`
             : html`
@@ -514,11 +531,7 @@ function SurpriseSection({ movie, loading, error, onRefresh }) {
       </div>
       <${InlineError} message=${error} />
       ${movie ? html`<${FeatureBanner} movie=${movie} eyebrow="Surprise pick" />` : null}
-      ${loading
-        ? html`<${LoadingBlock} label="Pulling a high-quality random pick..." />`
-        : movie
-          ? html`<${CompactMovieRow} movie=${movie} />`
-          : null}
+      ${loading ? html`<${LoadingBlock} label="Pulling a high-quality random pick..." />` : null}
     </section>
   `;
 }
@@ -532,6 +545,7 @@ function PersonalizationSection({
   error,
   results,
   onSubmit,
+  onSelectMovie,
 }) {
   return html`
     <section className="panel">
@@ -588,6 +602,7 @@ function PersonalizationSection({
                     <${PosterTile}
                       movie=${movie}
                       label=${`For You ${index + 1}`}
+                      onSelect=${onSelectMovie}
                     />
                   `
                 )}
@@ -599,8 +614,6 @@ function PersonalizationSection({
 }
 
 function LetterboxdSection({
-  username,
-  setUsername,
   csvText,
   setCsvText,
   file,
@@ -615,24 +628,19 @@ function LetterboxdSection({
       <div className="panel__header">
         <div>
           <p className="section-kicker">Letterboxd Import</p>
-          <h2>Bring in exports without pretending there is an official public API</h2>
+          <h2>Bring in Letterboxd exports through the reliable path</h2>
         </div>
         <p className="panel__copy">
-          CSV upload is the reliable path. Public username scraping is left disabled by default and fails
-          gracefully because the HTML surface is unofficial and fragile.
+          CSV upload is the supported import path here. Public username scraping is intentionally disabled
+          because Letterboxd has no official public API and the HTML surface is fragile.
         </p>
       </div>
 
       <div className="form-grid">
-        <label>
-          <span>Public username</span>
-          <input
-            type="text"
-            value=${username}
-            onInput=${(event) => setUsername(event.target.value)}
-            placeholder="optionalusername"
-          />
-        </label>
+        <div className="letterboxd-note">
+          <span>Username import unavailable</span>
+          <p>Use a CSV export from Letterboxd ratings, diary, or watch history instead.</p>
+        </div>
         <label>
           <span>Letterboxd CSV export</span>
           <input
@@ -666,7 +674,7 @@ function LetterboxdSection({
           ? html`
               <div className="letterboxd-summary">
                 <p>${result.message}</p>
-                <p>Imported titles: ${result.imported_titles.join(", ")}</p>
+                <p>Imported titles: ${formatImportedTitles(result.imported_titles)}</p>
               </div>
               <div className="poster-rail">
                 ${result.recommendations.map(
@@ -702,6 +710,7 @@ export function App() {
   const [similarMethod, setSimilarMethod] = useState("cosine");
   const [similarResults, setSimilarResults] = useState([]);
   const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState("");
 
   const [randomMovie, setRandomMovie] = useState(null);
   const [randomLoading, setRandomLoading] = useState(false);
@@ -713,7 +722,6 @@ export function App() {
   const [personalizedError, setPersonalizedError] = useState("");
   const [personalizedResults, setPersonalizedResults] = useState(null);
 
-  const [letterboxdUsername, setLetterboxdUsername] = useState("");
   const [letterboxdCsvText, setLetterboxdCsvText] = useState("");
   const [letterboxdFile, setLetterboxdFile] = useState(null);
   const [letterboxdLoading, setLetterboxdLoading] = useState(false);
@@ -757,6 +765,7 @@ export function App() {
           setSelectedMovie(null);
           setSeedMovie(null);
           setSimilarResults([]);
+          setSimilarError("");
         });
         return;
       }
@@ -764,6 +773,7 @@ export function App() {
       try {
         setSearchLoading(true);
         setSearchError("");
+        setSimilarError("");
         const filterPayload = toApiFilters(filters);
         const payload = await searchMovies({
           q: debouncedQuery,
@@ -795,6 +805,7 @@ export function App() {
       if (!selectedMovie?.movie_id) return;
       try {
         setSimilarLoading(true);
+        setSimilarError("");
         const filterPayload = toApiFilters(filters);
         const payload = await getSimilarMovies({
           movie_id: selectedMovie.movie_id,
@@ -807,7 +818,7 @@ export function App() {
           setSimilarResults(payload.recommendations);
         });
       } catch (error) {
-        setSearchError(error.message);
+        setSimilarError(error.message);
       } finally {
         setSimilarLoading(false);
       }
@@ -862,9 +873,6 @@ export function App() {
       if (letterboxdCsvText.trim()) {
         formData.set("csv_text", letterboxdCsvText);
       }
-      if (letterboxdUsername.trim()) {
-        formData.set("username", letterboxdUsername.trim());
-      }
       formData.set("top_n", "8");
       Object.entries(toApiFilters(filters)).forEach(([key, value]) => {
         if (value !== undefined && value !== null && value !== "") {
@@ -885,7 +893,7 @@ export function App() {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
-  const heroBackdrop = seedMovie?.backdrop_url || randomMovie?.backdrop_url || "";
+  const heroBackdrop = randomMovie?.backdrop_url || "";
 
   return html`
     <div className="page-shell">
@@ -952,6 +960,7 @@ export function App() {
             similarMethod=${similarMethod}
             setSimilarMethod=${setSimilarMethod}
             similarLoading=${similarLoading}
+            similarError=${similarError}
           />
           <${PersonalizationSection}
             favoriteTitles=${favoriteTitles}
@@ -962,6 +971,7 @@ export function App() {
             error=${personalizedError}
             results=${personalizedResults}
             onSubmit=${handlePersonalizedSubmit}
+            onSelectMovie=${setSelectedMovie}
           />
         </div>
         <div className="content-grid__side">
@@ -972,8 +982,6 @@ export function App() {
             onRefresh=${refreshRandomMovie}
           />
           <${LetterboxdSection}
-            username=${letterboxdUsername}
-            setUsername=${setLetterboxdUsername}
             csvText=${letterboxdCsvText}
             setCsvText=${setLetterboxdCsvText}
             file=${letterboxdFile}
