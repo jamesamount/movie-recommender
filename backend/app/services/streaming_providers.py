@@ -129,12 +129,41 @@ class TMDbStreamingProviderService:
             "watch_link": str(region_data.get("link", "")).strip(),
         }
 
+    @lru_cache(maxsize=4096)
+    def movie_visuals(self, tmdb_movie_id: str) -> dict:
+        if not self.enabled:
+            return {"poster_url": "", "backdrop_url": ""}
+
+        payload = self._request(f"/movie/{tmdb_movie_id}")
+        poster_path = str(payload.get("poster_path", "") or "").strip()
+        backdrop_path = str(payload.get("backdrop_path", "") or "").strip()
+        return {
+            "poster_url": f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else "",
+            "backdrop_url": f"https://image.tmdb.org/t/p/w780{backdrop_path}" if backdrop_path else "",
+        }
+
     def annotate_movie(self, movie: dict) -> dict:
         availability = self.movie_availability(str(movie["movie_id"]))
         enriched = dict(movie)
         enriched["streaming_services"] = availability["streaming_services"]
         enriched["watch_link"] = availability["watch_link"]
         return enriched
+
+    def enrich_movie_media(self, movie: dict) -> dict:
+        enriched = dict(movie)
+        if enriched.get("poster_url") and enriched.get("backdrop_url"):
+            return enriched
+        visuals = self.movie_visuals(str(movie["movie_id"]))
+        if not enriched.get("poster_url"):
+            enriched["poster_url"] = visuals["poster_url"]
+        if not enriched.get("backdrop_url"):
+            enriched["backdrop_url"] = visuals["backdrop_url"]
+        return enriched
+
+    def enrich_movies_media(self, movies: Iterable[dict]) -> list[dict]:
+        if not self.enabled:
+            return list(movies)
+        return [self.enrich_movie_media(movie) for movie in movies]
 
     def filter_movies(self, movies: Iterable[dict], selected_services: Iterable[str]) -> list[dict]:
         selected = {

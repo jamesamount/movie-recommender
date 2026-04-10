@@ -8,7 +8,14 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from ml.config import DEMO_CATALOG_PATH, RAW_MOVIELENS_DIR, RAW_TMDB_DIR
+from ml.config import (
+    BUILD_PROFILE,
+    DEMO_CATALOG_PATH,
+    DEPLOY_CATALOG_LIMIT,
+    DEPLOY_MIN_VOTE_COUNT,
+    RAW_MOVIELENS_DIR,
+    RAW_TMDB_DIR,
+)
 
 
 @dataclass(slots=True)
@@ -93,6 +100,9 @@ def _ensure_demo_catalog() -> pd.DataFrame:
     catalog["user_rating_count"] = _coerce_int(catalog["user_rating_count"])
     catalog["movie_id"] = catalog["movie_id"].astype(str)
     catalog["poster_url"] = catalog["poster_url"].fillna("").astype(str)
+    if "backdrop_url" not in catalog.columns:
+        catalog["backdrop_url"] = ""
+    catalog["backdrop_url"] = catalog["backdrop_url"].fillna("").astype(str)
     catalog["source"] = catalog["source"].fillna("demo_curated").astype(str)
     return catalog
 
@@ -134,10 +144,10 @@ def _load_movielens_rating_stats() -> pd.DataFrame:
 
 
 def _build_tmdb_catalog() -> pd.DataFrame:
-    movies = pd.read_csv(
-        RAW_TMDB_DIR / "movies_metadata.csv",
-        low_memory=False,
-        usecols=[
+    movie_columns = pd.read_csv(RAW_TMDB_DIR / "movies_metadata.csv", nrows=0).columns.tolist()
+    selected_movie_columns = [
+        column
+        for column in [
             "id",
             "title",
             "overview",
@@ -148,7 +158,14 @@ def _build_tmdb_catalog() -> pd.DataFrame:
             "popularity",
             "runtime",
             "poster_path",
-        ],
+            "backdrop_path",
+        ]
+        if column in movie_columns
+    ]
+    movies = pd.read_csv(
+        RAW_TMDB_DIR / "movies_metadata.csv",
+        low_memory=False,
+        usecols=selected_movie_columns,
     )
     credits = pd.read_csv(RAW_TMDB_DIR / "credits.csv", usecols=["id", "cast", "crew"])
     keywords = pd.read_csv(RAW_TMDB_DIR / "keywords.csv", usecols=["id", "keywords"])
@@ -189,6 +206,10 @@ def _build_tmdb_catalog() -> pd.DataFrame:
     merged["poster_url"] = merged["poster_path"].fillna("").map(
         lambda path: f"https://image.tmdb.org/t/p/w342{path}" if path else ""
     )
+    merged["backdrop_path"] = merged.get("backdrop_path", "").fillna("") if "backdrop_path" in merged else ""
+    merged["backdrop_url"] = pd.Series(merged["backdrop_path"]).fillna("").map(
+        lambda path: f"https://image.tmdb.org/t/p/w780{path}" if path else ""
+    )
     merged["source"] = "tmdb_movielens"
     merged["movie_id"] = merged["tmdb_id"].astype(str)
 
@@ -213,9 +234,22 @@ def _build_tmdb_catalog() -> pd.DataFrame:
         "avg_user_rating",
         "user_rating_count",
         "poster_url",
+        "backdrop_url",
         "source",
     ]
-    return merged[columns].reset_index(drop=True)
+    catalog = merged[columns].reset_index(drop=True)
+
+    if BUILD_PROFILE == "deploy":
+        catalog = catalog[
+            (catalog["vote_count"] >= DEPLOY_MIN_VOTE_COUNT)
+            | (catalog["popularity"] >= catalog["popularity"].quantile(0.60))
+        ].copy()
+        catalog = catalog.sort_values(
+            ["vote_count", "popularity", "vote_average"],
+            ascending=[False, False, False],
+        ).head(DEPLOY_CATALOG_LIMIT)
+
+    return catalog.reset_index(drop=True)
 
 
 def load_movie_catalog() -> DatasetLoadResult:
@@ -257,4 +291,3 @@ def resolve_title_matches(catalog: pd.DataFrame, titles: Iterable[str]) -> list[
         for index in title_index.get(normalized, []):
             matches.append(index)
     return list(dict.fromkeys(matches))
-

@@ -57,6 +57,13 @@ def _apply_streaming_filter(
         raise HTTPException(status_code=404, detail=expand_pool_message)
     return filtered
 
+
+def _enrich_media(movies: list[dict]) -> list[dict]:
+    streaming_service = get_streaming_provider_service()
+    if not streaming_service.enabled:
+        return movies
+    return streaming_service.enrich_movies_media(movies)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -167,6 +174,8 @@ def recommend_similar(
         selected_services=requested_services,
         expand_pool_message="No similar movies matched the selected streaming services.",
     )[:top_n]
+    payload["seed_movie"] = _enrich_media([payload["seed_movie"]])[0]
+    payload["recommendations"] = _enrich_media(payload["recommendations"])
     return SimilarResponse(method=method, **payload)
 
 
@@ -206,6 +215,7 @@ def recommend_random(
             )
     except RecommendationError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    movie = _enrich_media([movie])[0]
     return RandomResponse(movie=movie)
 
 
@@ -230,6 +240,8 @@ def recommend_personalized(payload: PersonalizedRequest) -> PersonalizedResponse
         selected_services=selected_services,
         expand_pool_message="No personalized recommendations matched the selected streaming services.",
     )[: payload.top_n]
+    result["seed_movies"] = _enrich_media(result["seed_movies"])
+    result["recommendations"] = _enrich_media(result["recommendations"])
     return PersonalizedResponse(**result)
 
 
@@ -284,6 +296,8 @@ async def import_letterboxd(
         selected_services=selected_services,
         expand_pool_message="No Letterboxd recommendations matched the selected streaming services.",
     )[:top_n]
+    result["seed_movies"] = _enrich_media(result["seed_movies"])
+    result["recommendations"] = _enrich_media(result["recommendations"])
 
     return LetterboxdImportResponse(
         imported_count=len(frame),

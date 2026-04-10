@@ -17,6 +17,7 @@ class MovieCard(BaseModel):
     runtime: int | None = None
     overview: str = ""
     poster_url: str = ""
+    backdrop_url: str = ""
     source: str = ""
     quality_score: float = 0.0
     streaming_services: list[str] = Field(default_factory=list)

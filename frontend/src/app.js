@@ -1,6 +1,5 @@
 import React, {
   startTransition,
-  useDeferredValue,
   useEffect,
   useState,
 } from "react";
@@ -72,16 +71,51 @@ function InlineError({ message }) {
   return html`<div className="inline-error">${message}</div>`;
 }
 
+function MediaArtwork({ src, alt, className, onError }) {
+  if (!src) return null;
+  return html`<img className=${className} src=${src} alt=${alt} loading="lazy" onError=${onError} />`;
+}
+
+function FeatureBanner({ movie, eyebrow = "Featured" }) {
+  const [bannerFailed, setBannerFailed] = useState(false);
+  const bannerSrc = !bannerFailed ? (movie?.backdrop_url || movie?.poster_url || "") : "";
+
+  if (!movie) return null;
+
+  return html`
+    <section className="feature-banner">
+      ${bannerSrc
+        ? html`
+            <${MediaArtwork}
+              src=${bannerSrc}
+              alt=${movie.title}
+              className="feature-banner__image"
+              onError=${() => setBannerFailed(true)}
+            />
+          `
+        : null}
+      <div className="feature-banner__overlay"></div>
+      <div className="feature-banner__content">
+        <p className="section-kicker">${eyebrow}</p>
+        <h3>${movie.title}</h3>
+        <p>${movie.overview}</p>
+      </div>
+    </section>
+  `;
+}
+
 function MovieCard({ movie, badge, onSelect, actionLabel = "Find similar" }) {
+  const [posterFailed, setPosterFailed] = useState(false);
   const posterHue = Math.abs(
     Array.from(`${movie.title}${movie.year || ""}`).reduce(
       (accumulator, character) => accumulator + character.charCodeAt(0),
       0
     )
   ) % 360;
-  const posterStyle = movie.poster_url
+  const artworkSrc = !posterFailed ? (movie.poster_url || movie.backdrop_url || "") : "";
+  const posterStyle = artworkSrc
     ? {
-        backgroundImage: `linear-gradient(180deg, rgba(6, 10, 14, 0.18), rgba(6, 10, 14, 0.78)), url(${movie.poster_url})`,
+        backgroundImage: "linear-gradient(180deg, rgba(6, 10, 14, 0.08), rgba(6, 10, 14, 0.4))",
       }
     : {
         backgroundImage: `linear-gradient(160deg, hsla(${posterHue}, 70%, 58%, 0.65), hsla(${
@@ -92,7 +126,17 @@ function MovieCard({ movie, badge, onSelect, actionLabel = "Find similar" }) {
   return html`
     <article className="movie-card">
       <div className="movie-card__poster" style=${posterStyle}>
-        ${movie.poster_url
+        ${artworkSrc
+          ? html`
+              <${MediaArtwork}
+                src=${artworkSrc}
+                alt=${movie.title}
+                className="movie-card__image"
+                onError=${() => setPosterFailed(true)}
+              />
+            `
+          : null}
+        ${artworkSrc
           ? null
           : html`
               <div className="poster-fallback">
@@ -269,6 +313,7 @@ function SearchSection({
   onSelectMovie,
   selectedMovie,
   similarResults,
+  seedMovie,
   similarMethod,
   setSimilarMethod,
   similarLoading,
@@ -296,6 +341,7 @@ function SearchSection({
       </div>
 
       <${InlineError} message=${error} />
+      ${seedMovie ? html`<${FeatureBanner} movie=${seedMovie} eyebrow="Current seed" />` : null}
 
       <div className="search-results">
         <div>
@@ -371,6 +417,7 @@ function SurpriseSection({ movie, loading, error, onRefresh }) {
         <button className="primary-button" onClick=${onRefresh}>Roll a random movie</button>
       </div>
       <${InlineError} message=${error} />
+      ${movie ? html`<${FeatureBanner} movie=${movie} eyebrow="Surprise pick" />` : null}
       ${loading
         ? html`<${LoadingBlock} label="Pulling a high-quality random pick..." />`
         : movie
@@ -539,12 +586,13 @@ export function App() {
   const [filters, setFilters] = useState(emptyFilters);
 
   const [query, setQuery] = useState("Interstellar");
-  const deferredQuery = useDeferredValue(query);
+  const [debouncedQuery, setDebouncedQuery] = useState("Interstellar");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
 
   const [selectedMovie, setSelectedMovie] = useState(null);
+  const [seedMovie, setSeedMovie] = useState(null);
   const [similarMethod, setSimilarMethod] = useState("cosine");
   const [similarResults, setSimilarResults] = useState([]);
   const [similarLoading, setSimilarLoading] = useState(false);
@@ -567,14 +615,28 @@ export function App() {
   const [letterboxdResult, setLetterboxdResult] = useState(null);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [query]);
+
+  useEffect(() => {
     async function loadHealth() {
       try {
         const payload = await getHealth();
         setHealth(payload);
+      } catch (error) {
+        setAppError(error.message);
+        return;
+      }
+
+      try {
         const providerPayload = await getStreamingProviders();
         setStreamingProviders(providerPayload);
       } catch (error) {
-        setAppError(error.message);
+        setStreamingProviders({ enabled: false, providers: [], watch_region: "US", message: error.message });
       }
     }
 
@@ -583,10 +645,11 @@ export function App() {
 
   useEffect(() => {
     async function runSearch() {
-      if (!deferredQuery.trim()) {
+      if (!debouncedQuery.trim()) {
         startTransition(() => {
           setSearchResults([]);
           setSelectedMovie(null);
+          setSeedMovie(null);
           setSimilarResults([]);
         });
         return;
@@ -597,7 +660,7 @@ export function App() {
         setSearchError("");
         const filterPayload = toApiFilters(filters);
         const payload = await searchMovies({
-          q: deferredQuery,
+          q: debouncedQuery,
           limit: 8,
           ...filterPayload,
         });
@@ -607,6 +670,7 @@ export function App() {
             setSelectedMovie(payload.results[0]);
           } else {
             setSelectedMovie(null);
+            setSeedMovie(null);
             setSimilarResults([]);
           }
         });
@@ -618,7 +682,7 @@ export function App() {
     }
 
     runSearch();
-  }, [deferredQuery, filters.genre, filters.decade, filters.minRating, filters.runtimeMax, filters.streamingServices]);
+  }, [debouncedQuery, filters.genre, filters.decade, filters.minRating, filters.runtimeMax, filters.streamingServices]);
 
   useEffect(() => {
     async function runSimilar() {
@@ -633,6 +697,7 @@ export function App() {
           ...filterPayload,
         });
         startTransition(() => {
+          setSeedMovie(payload.seed_movie);
           setSimilarResults(payload.recommendations);
         });
       } catch (error) {
@@ -768,6 +833,7 @@ export function App() {
             onSelectMovie=${setSelectedMovie}
             selectedMovie=${selectedMovie}
             similarResults=${similarResults}
+            seedMovie=${seedMovie}
             similarMethod=${similarMethod}
             setSimilarMethod=${setSimilarMethod}
             similarLoading=${similarLoading}

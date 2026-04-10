@@ -17,3 +17,23 @@ DEMO_CATALOG_PATH = Path(os.getenv("MOVIE_DEMO_CATALOG_PATH", DEMO_DIR / "demo_m
 LETTERBOXD_SAMPLE_PATH = Path(
     os.getenv("MOVIE_LETTERBOXD_SAMPLE_PATH", DEMO_DIR / "sample_letterboxd_ratings.csv")
 )
+
+BUILD_PROFILE = os.getenv("MOVIE_BUILD_PROFILE", "full").strip().lower()
+DEPLOY_CATALOG_LIMIT = int(os.getenv("MOVIE_DEPLOY_CATALOG_LIMIT", "12000"))
+DEPLOY_MIN_VOTE_COUNT = int(os.getenv("MOVIE_DEPLOY_MIN_VOTE_COUNT", "40"))
+TFIDF_MAX_FEATURES = int(
+    os.getenv(
+        "MOVIE_TFIDF_MAX_FEATURES",
+        "7000" if BUILD_PROFILE == "deploy" else "15000",
+    )
+)
+TEXT_NGRAM_MAX = int(
+    os.getenv(
+        "MOVIE_TFIDF_NGRAM_MAX",
+        "1" if BUILD_PROFILE == "deploy" else "2",
+    )
+)
+STORE_NN_MODEL = os.getenv(
+    "MOVIE_STORE_NN_MODEL",
+    "0" if BUILD_PROFILE == "deploy" else "1",
+).strip() not in {"0", "false", "False"}

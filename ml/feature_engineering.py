@@ -11,7 +11,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, normalize
 
-from ml.config import ARTIFACT_PATH, MODELS_DIR, PROCESSED_CATALOG_PATH, PROCESSED_DIR
+from ml.config import (
+    ARTIFACT_PATH,
+    MODELS_DIR,
+    PROCESSED_CATALOG_PATH,
+    PROCESSED_DIR,
+    STORE_NN_MODEL,
+    TEXT_NGRAM_MAX,
+    TFIDF_MAX_FEATURES,
+)
 
 
 NUMERIC_COLUMNS = [
@@ -28,6 +36,7 @@ NUMERIC_FEATURE_WEIGHT = 0.18
 
 ARTIFACT_CATALOG_COLUMNS = [
     "movie_id",
+    "tmdb_id",
     "title",
     "year",
     "genres",
@@ -40,6 +49,7 @@ ARTIFACT_CATALOG_COLUMNS = [
     "user_rating_count",
     "overview",
     "poster_url",
+    "backdrop_url",
     "source",
     "quality_score",
 ]
@@ -96,15 +106,18 @@ def build_artifact(catalog: pd.DataFrame, dataset_source: str) -> ArtifactBuildR
 
     vectorizer = TfidfVectorizer(
         stop_words="english",
-        ngram_range=(1, 2),
-        max_features=15000,
+        ngram_range=(1, TEXT_NGRAM_MAX),
+        max_features=TFIDF_MAX_FEATURES,
         min_df=1,
+        dtype=np.float32,
     )
-    text_matrix = normalize(vectorizer.fit_transform(working["text_blob"]))
+    text_matrix = normalize(vectorizer.fit_transform(working["text_blob"]).astype(np.float32))
 
     numeric_frame = working[NUMERIC_COLUMNS].apply(pd.to_numeric, errors="coerce").fillna(0.0)
     scaler = StandardScaler()
-    numeric_matrix = normalize(sparse.csr_matrix(scaler.fit_transform(numeric_frame)))
+    numeric_matrix = normalize(
+        sparse.csr_matrix(scaler.fit_transform(numeric_frame).astype(np.float32))
+    )
 
     feature_matrix = normalize(
         sparse.hstack(
@@ -112,11 +125,13 @@ def build_artifact(catalog: pd.DataFrame, dataset_source: str) -> ArtifactBuildR
                 text_matrix * TEXT_FEATURE_WEIGHT,
                 numeric_matrix * NUMERIC_FEATURE_WEIGHT,
             ]
-        ).tocsr()
-    )
+        ).tocsr(),
+    ).astype(np.float32)
 
-    nn_model = NearestNeighbors(metric="cosine", algorithm="brute", n_neighbors=min(50, len(working)))
-    nn_model.fit(feature_matrix)
+    nn_model = None
+    if STORE_NN_MODEL:
+        nn_model = NearestNeighbors(metric="cosine", algorithm="brute", n_neighbors=min(50, len(working)))
+        nn_model.fit(feature_matrix)
 
     available_columns = [col for col in ARTIFACT_CATALOG_COLUMNS if col in working.columns]
     runtime_catalog = working[available_columns].copy()
@@ -127,11 +142,16 @@ def build_artifact(catalog: pd.DataFrame, dataset_source: str) -> ArtifactBuildR
         "nn_model": nn_model,
         "dataset_source": dataset_source,
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
-        "model_version": "1.1.0",
+        "model_version": "1.2.0",
         "numeric_columns": NUMERIC_COLUMNS,
         "feature_weights": {
             "text": TEXT_FEATURE_WEIGHT,
             "numeric": NUMERIC_FEATURE_WEIGHT,
+        },
+        "build_settings": {
+            "tfidf_max_features": TFIDF_MAX_FEATURES,
+            "text_ngram_max": TEXT_NGRAM_MAX,
+            "store_nn_model": STORE_NN_MODEL,
         },
     }
 

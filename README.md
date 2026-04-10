@@ -167,6 +167,27 @@ This writes:
 - `models/artifacts/movie_recommender.joblib`
 - `data/processed/catalog_preview.csv`
 
+For two different artifact styles:
+
+- local full profile:
+
+```bash
+MOVIE_BUILD_PROFILE=full python3 -m ml.build_pipeline
+```
+
+- Render-friendly deploy profile:
+
+```bash
+MOVIE_BUILD_PROFILE=deploy MOVIE_DEPLOY_CATALOG_LIMIT=12000 python3 -m ml.build_pipeline
+```
+
+The deploy profile keeps the full local pipeline intact while producing a smaller artifact:
+
+- fewer catalog rows
+- smaller TF-IDF vocabulary
+- `float32` feature matrix
+- no persisted k-NN model in the artifact
+
 ### 4. Start the app
 
 ```bash
@@ -203,6 +224,31 @@ The app now supports environment-based storage overrides, which makes hosting ea
 
 This is useful if your host mounts a separate disk or storage directory and you want the app to read raw data and model artifacts from there instead of the repo checkout.
 
+For Render free tier, the recommended workflow is:
+
+1. Build the deploy artifact locally
+2. Commit `models/artifacts/movie_recommender.joblib`
+3. Use a Render build command that only installs dependencies
+
+Example local build:
+
+```bash
+source .venv/bin/activate
+MOVIE_BUILD_PROFILE=deploy MOVIE_DEPLOY_CATALOG_LIMIT=12000 python -m ml.build_pipeline
+```
+
+Recommended Render build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+Recommended Render start command:
+
+```bash
+uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+```
+
 ## Streaming-service filters
 
 The app now supports filtering recommendations by streaming services you already have, but this feature depends on TMDb watch-provider data at runtime.
@@ -222,6 +268,7 @@ Once configured, the UI can:
 - let users select the services they have
 - filter search, similar, random, personalized, and Letterboxd recommendation results
 - attach "Where to watch" links when TMDb provides them
+- recover missing backdrop images for featured movies at runtime when the dataset does not include them
 
 ## Example user flows
 
